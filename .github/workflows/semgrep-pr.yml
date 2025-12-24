@@ -1,0 +1,49 @@
+name: Semgrep PR Scan
+
+on:
+  pull_request:
+    branches: [master]
+
+jobs:
+  semgrep-pr:
+    name: Semgrep OSS Scan (Diff)
+    runs-on: ubuntu-latest
+    container:
+      image: returntocorp/semgrep
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Fetch all history for git diff
+
+      - name: Scan changed files
+        run: |
+          # Mark directory as safe for git operations inside container
+          git config --global --add safe.directory $GITHUB_WORKSPACE
+          
+          # Fetch the base branch to ensure we have the reference for diffing
+          git fetch origin ${{ github.base_ref }} --depth=1
+          
+          # Get list of changed files (added, modified, renamed, copied), excluding deleted
+          CHANGED_FILES=$(git diff --name-only --diff-filter=d origin/${{ github.base_ref }} HEAD)
+          
+          if [ -z "$CHANGED_FILES" ]; then
+            echo "No files changed to scan."
+            exit 0
+          fi
+          
+          echo "Scanning the following changed files:"
+          echo "$CHANGED_FILES"
+          
+          # Run semgrep only on the changed files
+          # We use xargs to pass the file list to semgrep
+          echo "$CHANGED_FILES" | xargs semgrep scan --config=auto --sarif --output=semgrep-pr.sarif
+
+      - name: Upload SARIF artifact
+        # Only upload if the scan ran (file exists)
+        if: hashFiles('semgrep-pr.sarif') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: semgrep-pr.sarif
+          path: semgrep-pr.sarif
